@@ -1,0 +1,181 @@
+import asyncio
+import concurrent.futures
+import threading
+import time
+import tempfile
+import os
+import base64
+import numpy as np
+import cv2
+from PIL import Image, ImageDraw
+import requests
+import roslibpy
+import ollama  # 假設已安裝並配置好 ollama 套件
+
+# -------------------------------------------------
+# 模型設定 (使用 Ollama 本地端的 gemma3:12b 模型)
+# -------------------------------------------------
+MODEL_NAME = "gemma3:12b"
+
+# -------------------------------------------------
+# ROS 影像接收設定 (參考 test_roslibpy.py)
+# -------------------------------------------------
+# 全域變數：儲存 ROS 接收到的最新影像 (BGR 格式)
+ros_image = None
+
+def image_callback(message):
+    """
+    處理 ROS 接收到的 sensor_msgs/CompressedImage 訊息，
+    將壓縮後的影像資料解碼為 numpy 陣列後存入全域變數 ros_image。
+    """
+    global ros_image
+    try:
+        # 取得壓縮影像資料（假設 message['data'] 為 base64 編碼的字串）
+        if isinstance(message.get('data', None), str):
+            decoded_data = base64.b64decode(message['data'])
+        else:
+            decoded_data = message['data']
+        
+        # 將二進位資料轉換為 numpy 陣列
+        np_arr = np.frombuffer(decoded_data, np.uint8)
+        # 解碼影像 (cv2.IMREAD_COLOR 會回傳 BGR 格式的圖像)
+        image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        ros_image = image
+    except Exception as e:
+        print("影像處理錯誤:", e)
+
+def ros_listener():
+    """
+    啟動 roslibpy 客戶端並訂閱 ROS 影像 topic，
+    持續更新全域變數 ros_image
+    """
+    ros = roslibpy.Ros(host='localhost', port=9090)
+    ros.run()
+    image_topic = roslibpy.Topic(ros, '/Leader/cv_camera/image_raw/compressed', 'sensor_msgs/CompressedImage')
+    image_topic.subscribe(image_callback)
+    print("已訂閱 ROS 影像 topic，等待影像資料...")
+    while ros.is_connected:
+        time.sleep(0.1)
+
+# 啟動 ROS listener 執行緒
+threading.Thread(target=ros_listener, daemon=True).start()
+
+def get_ros_screenshot():
+    """
+    取得目前 ROS 影像並轉換為 PIL 格式 (RGB)。
+    若尚未接收到影像，回傳一張預設佔位圖。
+    """
+    global ros_image
+    if ros_image is None:
+        placeholder = Image.new("RGB", (640, 480), (128, 128, 128))
+        draw = ImageDraw.Draw(placeholder)
+        draw.text((10, 10), "尚未收到 ROS 影像", fill=(255, 255, 255))
+        return placeholder
+    image_rgb = cv2.cvtColor(ros_image, cv2.COLOR_BGR2RGB)
+    return Image.fromarray(image_rgb)
+
+# -------------------------------------------------
+# 模型推論函式：調用 Ollama 模型並處理暫存檔案
+# -------------------------------------------------
+def infer(image, prompt):
+    """
+    使用 Ollama 本地端模型 gemma3:12b 進行推論。
+    若提示詞為空，則使用預設提示。
+    
+    將上傳的 PIL Image 儲存為暫存檔案，再傳入模型進行推論，
+    推論完成後自動刪除暫存檔案，並在過程中加入錯誤處理機制。
+    """
+    if not prompt:
+        prompt = "使用繁體中文解析場景內容"
+    
+    temp_filename = None
+    try:
+        # 將圖片存為暫存檔案
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            temp_filename = tmp.name
+            image.save(temp_filename, format="JPEG")
+        
+        # 呼叫 Ollama 模型，傳入 prompt 及圖片檔案路徑
+        res = ollama.chat(
+            model=MODEL_NAME,
+            messages=[
+                {
+                    'role': 'user',
+                    'content': prompt,
+                    'images': [temp_filename]
+                }
+            ]
+        )
+        # 回傳模型生成的描述
+        return res['message']['content']
+    except Exception as e:
+        print("推論過程中發生錯誤:", e)
+        return "推論失敗"
+    finally:
+        # 刪除暫存檔案以避免累積不必要的檔案
+        if temp_filename and os.path.exists(temp_filename):
+            try:
+                os.remove(temp_filename)
+            except Exception as cleanup_error:
+                print("清理暫存檔案時發生錯誤:", cleanup_error)
+
+# -------------------------------------------------
+# 管線化各階段函式
+# -------------------------------------------------
+def acquire_image():
+    """
+    階段 1：取得 ROS 最新影像
+    """
+    return get_ros_screenshot()
+
+def preprocess(image):
+    """
+    階段 2：前處理 (可依需求加入圖片縮放、裁剪等處理)
+    目前直接傳回原始圖片。
+    """
+    return image
+
+def run_inference(preprocessed_image):
+    """
+    階段 3：模型推論
+    """
+    return infer(preprocessed_image, "")
+
+def postprocess(result):
+    """
+    階段 4：後處理 (例如格式化結果)
+    此處直接傳回結果字串。
+    """
+    return result
+
+# -------------------------------------------------
+# 非同步管線函式：依序執行各階段並輸出結果與耗時
+# -------------------------------------------------
+async def inference_pipeline(loop, executor):
+    while True:
+        # 階段 1：取得影像
+        image = await loop.run_in_executor(executor, acquire_image)
+        # 階段 2：前處理
+        preprocessed = await loop.run_in_executor(executor, preprocess, image)
+        # 階段 3：模型推論
+        start_time = time.time()
+        inference_result = await loop.run_in_executor(executor, run_inference, preprocessed)
+        elapsed_time = time.time() - start_time
+        # 階段 4：後處理
+        final_output = await loop.run_in_executor(executor, postprocess, inference_result)
+        print("【解析結果】", final_output)
+        print("推論耗時：{:.2f} 秒".format(elapsed_time))
+        # 控制 pipeline 頻率 (例如每 3 秒一個循環)
+        await asyncio.sleep(3)
+
+# -------------------------------------------------
+# 主程式：啟動非同步管線
+# -------------------------------------------------
+async def main():
+    loop = asyncio.get_running_loop()
+    # 使用 ThreadPoolExecutor 執行阻塞性任務
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        await inference_pipeline(loop, executor)
+
+if __name__ == "__main__":
+    asyncio.run(main())
