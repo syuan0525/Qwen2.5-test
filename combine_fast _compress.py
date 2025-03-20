@@ -40,31 +40,25 @@ ros_image = None
 
 def image_callback(message):
     """
-    處理 ROS 接收到的 sensor_msgs/Image 訊息，
-    轉換為 numpy 陣列後存入全域變數 ros_image
+    處理 ROS 接收到的 sensor_msgs/CompressedImage 訊息，
+    將壓縮後的影像資料解碼為 numpy 陣列後存入全域變數 ros_image。
     """
     global ros_image
     try:
-        height = message.get('height', 0)
-        width = message.get('width', 0)
-        encoding = message.get('encoding', 'rgb8')
-        data = message.get('data', None)
-        if height == 0 or width == 0 or data is None:
-            return
-        if isinstance(data, str):
-            decoded_data = base64.b64decode(data)
-            np_data = np.frombuffer(decoded_data, dtype=np.uint8)
+        # 取得壓縮影像資料（假設 message['data'] 為 base64 編碼的字串）
+        if isinstance(message.get('data', None), str):
+            decoded_data = base64.b64decode(message['data'])
         else:
-            np_data = np.array(data, dtype=np.uint8)
-        if encoding in ['rgb8', 'bgr8']:
-            image = np_data.reshape((height, width, 3))
-            if encoding == 'rgb8':
-                image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        else:
-            image = np_data.reshape((height, width))
+            decoded_data = message['data']
+        
+        # 將二進位資料轉換為 numpy 陣列
+        np_arr = np.frombuffer(decoded_data, np.uint8)
+        # 解碼影像 (cv2.IMREAD_COLOR 會回傳 BGR 格式的圖像)
+        image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         ros_image = image
     except Exception as e:
         print("影像處理錯誤:", e)
+
 
 def ros_listener():
     """
@@ -73,7 +67,7 @@ def ros_listener():
     """
     ros = roslibpy.Ros(host='localhost', port=9090)
     ros.run()
-    image_topic = roslibpy.Topic(ros, '/Leader/cv_camera/image_raw', 'sensor_msgs/Image')
+    image_topic = roslibpy.Topic(ros, '/Leader/cv_camera/image_raw/compressed', 'sensor_msgs/CompressedImage')
     image_topic.subscribe(image_callback)
     print("已訂閱 ROS 影像 topic，等待影像資料...")
     while ros.is_connected:

@@ -19,7 +19,7 @@ max_pixels = 640 * 28 * 28
 # 如果硬體支援 GPU 並使用 float16，可嘗試這樣設定
 model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
     MODEL_NAME,
-    torch_dtype=torch.float16,  # 改用 float16
+    torch_dtype=torch.bfloat16,  # 改用 bfloat16
     device_map="auto"
 )
 processor = AutoProcessor.from_pretrained(
@@ -29,8 +29,8 @@ processor = AutoProcessor.from_pretrained(
 )
 
 # 將模型移到 GPU (如果可用)
-if torch.cuda.is_available():
-    model = model.to("cuda")
+# if torch.cuda.is_available():
+#     model = model.to("cuda")
 
 # -------------------------------------------------
 # ROS 影像接收設定

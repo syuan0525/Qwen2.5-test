@@ -4,7 +4,7 @@ from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 from qwen_vl_utils import process_vision_info
 
 # 模型名稱變數
-MODEL_NAME = "Qwen/Qwen2.5-VL-3B-Instruct"
+MODEL_NAME = "Qwen/Qwen2.5-VL-7B-Instruct"
 
 # 全域載入模型與處理器
 model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
@@ -23,10 +23,7 @@ processor = AutoProcessor.from_pretrained(
 def infer(image, prompt=""):
     # 如果未提供提示詞，則使用預設提示詞
     default_prompt = (
-        "請使用繁體中文做物件影像辨識,等只須提供最主要識別到的物件,並給予物件在圖片中的大致座標,"
-        "描述方式為例如: 手機,在圖片左上(1); 水壺,在圖片中上(2); 筆,在圖片右上(3); 書,在圖片左方(4); "
-        "貓咪,在圖片正中(5); 書,在圖片右方(6); 狗,在圖片左下(7); 貓咪,在圖片中下(8); 鑰匙,在圖片的右下(9) "
-        "等 其中()內的數字代表物品分別表示的位置座標"
+        "使用繁體中文解析場景內容"
     )
     if prompt.strip() == "":
         prompt = default_prompt

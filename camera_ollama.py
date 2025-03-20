@@ -6,7 +6,9 @@ from PIL import Image
 # 將模型名稱設定為變數
 MODEL_NAME = "gemma3:12b"
 
-def infer(image, prompt="請描述這張圖片內容:"):
+def infer(image, prompt):
+    if not prompt:
+        prompt = "使用繁體中文解析場景內容"
     # 將上傳的 PIL Image 儲存為暫存檔
     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
         temp_filename = tmp.name
@@ -35,7 +37,7 @@ demo = gr.Interface(
         gr.Textbox(value="", label="提示詞")  # 預設值為空，使用者可以自行輸入
     ],
     outputs="text",
-    title="Ollama 視覺語言模型示例",
+    title="Gemma3:12b 視覺語言模型示例",
     description="上傳或拍攝一張圖片，模型將根據圖片內容生成描述。"
 )
 
